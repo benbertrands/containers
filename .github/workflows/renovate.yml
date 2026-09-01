@@ -1,0 +1,72 @@
+name: Renovate
+
+# Self-hosted Renovate, rather than the hosted GitHub App, so the whole thing
+# lives in this repository and needs no third-party access to it.
+#
+# Weekly is a deliberate cadence: often enough that a release is never months
+# stale, rare enough that the dependency dashboard is worth reading when it
+# changes. Run it by hand from the Actions tab whenever a release is worth
+# chasing sooner.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: "Renovate log level"
+        type: choice
+        default: info
+        options: [info, debug]
+
+permissions:
+  # Naming ANY permission here sets every unnamed one to `none` -- they are not
+  # added to the repository default, they replace it. `statuses` and `checks` are
+  # not optional despite looking it: Renovate reads commit statuses before opening
+  # a pull request, and a `none` there returns a 403 that Renovate reports as
+  # "Resource not accessible by integration" and treats as
+  # `integration-unauthorized`, aborting the whole repository after it has already
+  # pushed the first branch -- so it looks like a partial run rather than a
+  # permissions problem. `statuses` is write, not read, because `minimumReleaseAge`
+  # in renovate.json makes Renovate publish a `renovate/stability-days` commit
+  # status on each branch, so it has to set statuses as well as read them.
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+  checks: read
+
+# The dependency dashboard is a single issue Renovate rewrites, so two concurrent
+# runs would fight over it.
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.1.0
+
+      - name: Renovate
+        uses: renovatebot/github-action@v46.2.2
+        with:
+          # The built-in token, with the permissions block above. No PAT needed,
+          # so nothing here holds credentials that outlive the job.
+          #
+          # One consequence worth knowing: a pull request opened with
+          # GITHUB_TOKEN does not itself trigger other workflows, so the images
+          # workflow does not build a Renovate branch automatically. Push an empty
+          # commit to the branch, or use its "Run workflow" button, on the rare
+          # pull request where the pre-merge build actually matters -- a base
+          # image major, which is also the one that needs an IMAGE_REVISION bump.
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          RENOVATE_PLATFORM: github
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          # renovate.json is committed, so skip the onboarding pull request and
+          # fail loudly rather than silently doing nothing if it ever goes
+          # missing.
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: "required"
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
