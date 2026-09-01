@@ -64,15 +64,24 @@ Two consequences of using `GITHUB_TOKEN` are worth knowing:
 
 ## One-time setup
 
-GitHub Packages creates each package on first push, and visibility is set on the
-package rather than inherited from this repository. After the first successful
-run, for **each** of the two packages:
+GitHub Packages creates each package on first push, and a new package scoped to a
+personal account is **private by default**. Linking it to this repository — which
+the `org.opencontainers.image.source` label does — does not change that: a linked
+package inherits the repository's access permissions but *not* its visibility. So
+a public repository still produces a private package, and anonymous `docker pull`
+fails with `unauthorized` until the package itself is made public.
+
+After the first successful run, for **each** of the two packages:
 
 > github.com/users/benbertrands/packages/container/`<image>`/settings →
 > **Change visibility** → **Public**
 
-This is not exposed by the REST API, so it cannot be done from the workflow. It
-sticks once set.
+The Packages REST API has no endpoint that sets visibility, so this cannot be
+done from the workflow — `packages: write` grants push access, not visibility
+administration. The web UI is the only supported path.
+
+Note this is one-way: once a package is public it cannot be made private again.
+It sticks once set, so later pushes keep it public.
 
 ## Building locally
 
