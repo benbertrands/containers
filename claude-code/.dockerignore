@@ -1,0 +1,4 @@
+# The build context is this directory; only the Dockerfile is ever needed.
+# Deny everything, then allow nothing back, so a file dropped here later cannot
+# be uploaded into the build or land in the image by accident.
+*

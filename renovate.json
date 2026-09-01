@@ -1,0 +1,73 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "Europe/Brussels",
+  "labels": [
+    "dependencies"
+  ],
+  "dependencyDashboard": true,
+  "description": [
+    "This repository builds two images that have no upstream publisher -- obsidian-headless",
+    "is npm-only and Anthropic ships no Claude Code image -- and Renovate keeps both halves",
+    "of each image current: the base image on the FROM line, and the npm version baked in.",
+    "Merging one of these pull requests runs .github/workflows/images.yml, which derives the",
+    "published tag from the npm ARG and pushes it to ghcr.io."
+  ],
+  "prConcurrentLimit": 5,
+  "minimumReleaseAge": "3 days",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": [
+        "The npm version baked into each image. Each is an `ARG <TOOL>_VERSION=` preceded by",
+        "a `# renovate:` comment naming the package, and the build workflow derives the",
+        "published image tag from that same ARG -- so merging one of these pull requests is",
+        "what produces the image. The FROM lines beside them are handled by Renovate's",
+        "built-in dockerfile manager and need no configuration here."
+      ],
+      "managerFilePatterns": [
+        "/^[^/]+/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\s+ARG \\S+_VERSION=(?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": [
+        "Majors here are real work rather than a pin bump: a Node major moves the runtime",
+        "under both tools, and a Claude Code major can change the flags a caller passes.",
+        "Label them so they are obvious in the pull request list and never merged on",
+        "autopilot."
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "major"
+      ]
+    },
+    {
+      "description": [
+        "Action updates are turned off because they cannot work here. The Renovate workflow",
+        "authenticates with the built-in GITHUB_TOKEN, and GitHub refuses any push that",
+        "modifies a file under .github/workflows/ unless the token carries the `workflows`",
+        "permission -- which is not one of the permissions a GITHUB_TOKEN can be granted. So",
+        "these pull requests would fail to push rather than land, and the dependency",
+        "dashboard would list updates that can never be applied.",
+        "The actions in this repository are therefore bumped by hand. Enabling this again",
+        "means issuing a fine-grained personal access token with `workflows` write and",
+        "passing it to the Renovate action, which reintroduces exactly the long-lived",
+        "credential the GITHUB_TOKEN setup exists to avoid."
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "enabled": false
+    }
+  ]
+}

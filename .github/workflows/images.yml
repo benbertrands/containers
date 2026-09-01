@@ -1,0 +1,205 @@
+name: Container images
+
+# Builds the two images this repository exists for, because neither tool
+# publishes one: obsidian-headless (npm only) and Claude Code (Anthropic ships a
+# devcontainer feature and a reference .devcontainer, explicitly a working
+# example rather than a maintained base image).
+#
+# Tags are the upstream version, verbatim and nothing else:
+# ghcr.io/<owner>/<image>:X.Y.Z. They are MUTABLE by design -- rebuilding an
+# unchanged upstream version republishes the same tag pointing at a new digest,
+# rather than inventing a packaging version number that has nothing to do with
+# the software inside. A consumer who needs byte-identical content across
+# deployments should pin by digest rather than by tag.
+#
+# There is deliberately no scheduled rebuild. A consumer pins a tag and a
+# container runtime does not re-pull a tag it already has, so republishing the
+# same tag against a patched base would deliver nothing to anyone who has already
+# pulled it. Base image updates ride along with the next version bump, which
+# changes the tag and is therefore actually fetched.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  # Naming any permission sets every unnamed one to `none` rather than adding to
+  # the repository default. The default here is the read-only minimum; the build
+  # job widens it to what pushing to ghcr.io needs.
+  contents: read
+
+# Two pushes to main in quick succession would otherwise race for the same tag.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Which images this run has to build. A push that touches one Dockerfile has no
+  # reason to rebuild and republish the other, so only changed images are built.
+  # Everything is built when the workflow itself changes, on a manual run, and
+  # whenever the diff cannot be determined.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      any: ${{ steps.select.outputs.any }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          # The change detection below diffs two commits, so the default shallow
+          # clone is not enough.
+          fetch-depth: 0
+
+      - name: Select the images to build
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # image:version_arg, the whole set this repository knows how to build.
+          images='claude-code:CLAUDE_CODE_VERSION obsidian-headless:OBSIDIAN_HEADLESS_VERSION'
+
+          changed=''
+          all=false
+          case "$EVENT" in
+            workflow_dispatch) all=true ;;
+            pull_request)
+              if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+                changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+              else
+                all=true
+              fi
+              ;;
+            push)
+              # A branch's first push, and a force push, report a before-SHA that
+              # is either all zeros or no longer reachable.
+              if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+                 && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                changed="$(git diff --name-only "$BEFORE" "$HEAD_SHA")"
+              else
+                all=true
+              fi
+              ;;
+            *) all=true ;;
+          esac
+
+          # A change to this workflow can change how every image is built.
+          if printf '%s\n' "$changed" | grep -qx '.github/workflows/images.yml'; then
+            all=true
+          fi
+
+          entries=''
+          for entry in $images; do
+            image="${entry%%:*}"
+            version_arg="${entry##*:}"
+            if [ "$all" = true ] || printf '%s\n' "$changed" | grep -qx "$image/Dockerfile"; then
+              entries="$entries{\"image\":\"$image\",\"version_arg\":\"$version_arg\"},"
+              echo "Selected: $image"
+            fi
+          done
+
+          if [ -z "$entries" ]; then
+            echo "No image Dockerfile changed; nothing to build."
+            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+            echo 'any=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix={\"include\":[${entries%,}]}" >> "$GITHUB_OUTPUT"
+            echo 'any=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Only this job touches the registry.
+      packages: write
+    strategy:
+      # One image failing to build should not hide whether the other one does.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      # The Dockerfile is the single source of truth for the version: the same
+      # ARG Renovate bumps is what names the tag, so a merged Renovate pull
+      # request produces the matching image with no second edit anywhere.
+      - name: Read the pinned version out of the Dockerfile
+        id: pin
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION_ARG: ${{ matrix.version_arg }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          dockerfile="$IMAGE/Dockerfile"
+
+          # head -1 matters: sed prints once per match, and a second matching line
+          # would otherwise append a second record to $GITHUB_OUTPUT and let file
+          # content redefine the tag that gets pushed.
+          version="$(sed -n "s/^ARG ${VERSION_ARG}=//p" "$dockerfile" | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error::could not read ${VERSION_ARG} from $dockerfile"
+            exit 1
+          fi
+          case "$version" in
+            *[!0-9.]*|'')
+              echo "::error::${VERSION_ARG} in $dockerfile is not a plain version: $version"
+              exit 1
+              ;;
+          esac
+
+          owner="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "tag=ghcr.io/$owner/$IMAGE:$version" >> "$GITHUB_OUTPUT"
+          echo "Building ghcr.io/$owner/$IMAGE:$version"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.3.0
+
+      - name: Log in to ghcr.io
+        # Not on a pull request: a fork's token cannot write packages, and a pull
+        # request build exists only to prove the Dockerfile still builds.
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: ${{ matrix.image }}
+          # Only amd64 is published: building arm64 as well would roughly double
+          # the build time to publish a layer nothing currently pulls.
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.pin.outputs.tag }}
+          # Provenance and SBOM attestations turn the tag into an image index
+          # with extra manifests attached. Runtimes pull it fine, but it makes
+          # `image inspect` on the consuming side less obvious for no benefit
+          # here.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          # Only written when the result is actually published. A pull request
+          # build's cache has no later consumer -- entries are scoped to the pull
+          # request ref -- and mode=max writes every intermediate layer, so it
+          # would evict main's cache from the shared quota for nothing.
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+        run: |
+          echo "Pushed \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
