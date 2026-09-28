@@ -22,7 +22,7 @@
 # slim ships neither python3 nor a compiler. Adding build-essential at that point
 # is the fix; note the downloaded binary is fetched outside npm's integrity
 # checks, so it is covered by neither the version pin below nor Renovate.
-FROM docker.io/library/node:22-trixie-slim
+FROM docker.io/library/node:24-trixie-slim
 
 # renovate: datasource=npm depName=obsidian-headless
 ARG OBSIDIAN_HEADLESS_VERSION=0.0.14

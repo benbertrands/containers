@@ -9,7 +9,7 @@
 # Renovate manages both pins -- the FROM line via its dockerfile manager, and
 # CLAUDE_CODE_VERSION via the custom npm manager in renovate.json. The image tag
 # pushed to ghcr.io is exactly CLAUDE_CODE_VERSION.
-FROM docker.io/library/node:22-trixie-slim
+FROM docker.io/library/node:24-trixie-slim
 
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
 ARG CLAUDE_CODE_VERSION=2.1.276
