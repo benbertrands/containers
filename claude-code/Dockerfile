@@ -33,8 +33,25 @@ RUN apt-get update \
 # before the USER drop below. That is inherent to installing it at all; the
 # mitigation is the release-age delay in renovate.json, which keeps a freshly
 # compromised release from being picked up the day it appears.
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    && npm cache clean --force
+#
+# That postinstall is also what makes the install work: it puts the native binary
+# over bin/claude.exe, which ships as a stub that only prints an error and exits
+# 1. npm 11 warns that the script is "not yet covered by allowScripts" but still
+# runs it; --allow-scripts names it explicitly, so a later npm that stops running
+# uncovered scripts by default does not silently leave the stub in place.
+#
+# The version check is the proof: the stub fails it, and so does an install that
+# resolved to anything other than the pinned version. It runs here rather than
+# as a CI step after the build, because the workflow pushes in the same step it
+# builds in -- a failing RUN is what keeps a broken image off ghcr.io.
+RUN npm install -g --allow-scripts=@anthropic-ai/claude-code \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && npm cache clean --force \
+    && installed="$(claude --version)" \
+    && case "$installed" in \
+         "${CLAUDE_CODE_VERSION} "*) ;; \
+         *) echo "claude --version printed '$installed', expected ${CLAUDE_CODE_VERSION}" >&2; exit 1 ;; \
+       esac
 
 # The bundled updater would replace the pinned version at runtime, which defeats
 # the point of pinning it: the image tag would stop describing what is actually
