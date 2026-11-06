@@ -12,7 +12,7 @@
 FROM docker.io/library/node:26-trixie-slim
 
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.317
+ARG CLAUDE_CODE_VERSION=2.1.318
 
 LABEL org.opencontainers.image.source="https://github.com/benbertrands/containers" \
       org.opencontainers.image.description="Claude Code ${CLAUDE_CODE_VERSION}" \
