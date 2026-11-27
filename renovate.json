@@ -7,7 +7,9 @@
   "labels": [
     "dependencies"
   ],
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "description": [
     "This repository builds two images that have no upstream publisher -- obsidian-headless",
     "is npm-only and Anthropic ships no Claude Code image -- and Renovate keeps both halves",
